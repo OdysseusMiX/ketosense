@@ -206,14 +206,22 @@ def main():
 		lcd_string("humid:"+str(dht.humidity)+"%",LCD_LINE_2)
 		time.sleep(3) # 3 second delay
 	else:
+		err_code = dht.error_code		
+		if err_code == 1:
+			err_str = "Missing Data"
+		elif err_code == 2:
+			err_str = "Checksum Err"
+		else:
+			err_str = "ERR CODE: " + str(err_code)
+		
 		lcd_string("Temp Sensor Err",LCD_LINE_1)
-		lcd_string("ERR CODE: " + str(dht.error_code),LCD_LINE_2)
+		lcd_string(err_str,LCD_LINE_2)
 		time.sleep(3)
 		
 			
 	# read the analog pin for the gas sensor
         gas = readadc(gas_adc, SPICLK, SPIMOSI, SPIMISO, SPICS)
-	if gas==-1:
+	if gas>-1:
 		lcd_string("Gas Sensor OK",LCD_LINE_1)
 		lcd_string("Value:"+str(gas),LCD_LINE_2)
 		time.sleep(3) # 3 second delay
