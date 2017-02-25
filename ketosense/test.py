@@ -33,15 +33,6 @@ GPIO.setup(sw_2,GPIO.IN)
 GPIO.setup(sw_3,GPIO.IN)
 # DHT11 data pin
 Temp_sensor = 12
-# ADC (Gas Sensor on CH0)
-#SPICLK = 18
-#SPIMISO = 23
-#SPIMOSI = 24
-#SPICS = 25
-#GPIO.setup(SPIMOSI, GPIO.OUT)
-#GPIO.setup(SPIMISO, GPIO.IN)
-#GPIO.setup(SPICLK, GPIO.OUT)
-#GPIO.setup(SPICS, GPIO.OUT)
 #//////////////////
 
 
@@ -132,63 +123,6 @@ lcd_line1 = "temp:"+str(dht.temperature)+" C"
 lcd_line2 = "humid:"+str(dht.humidity)+"%"
 '''
 
-# -------------- ADC Methods -----------------------
-# Extracted from http://osoyoo.com/driver/raspi-adc-pot.py
-# Written by Limor "Ladyada" Fried for Adafruit Industries, (c) 2015
-# This code is released into the public domain
-
-
-# read SPI data from MCP3008 chip, 8 possible adc's (0 thru 7)
-def readadc_old(adcnum, clockpin, mosipin, misopin, cspin):
-        if ((adcnum > 7) or (adcnum < 0)):
-                return -1
-        GPIO.output(cspin, True)
-
-        GPIO.output(clockpin, False)  # start clock low
-        GPIO.output(cspin, False)     # bring CS low
-
-        commandout = adcnum
-        commandout |= 0x18  # start bit + single-ended bit
-        commandout <<= 3    # we only need to send 5 bits here
-        for i in range(5):
-                if (commandout & 0x80):
-                        GPIO.output(mosipin, True)
-                else:
-                        GPIO.output(mosipin, False)
-                commandout <<= 1
-                GPIO.output(clockpin, True)
-                GPIO.output(clockpin, False)
-
-        adcout = 0
-        # read in one empty bit, one null bit and 10 ADC bits
-        for i in range(12):
-                GPIO.output(clockpin, True)
-                GPIO.output(clockpin, False)
-                adcout <<= 1
-                if (GPIO.input(misopin)):
-                        adcout |= 0x1
-
-        GPIO.output(cspin, True)
-        
-        adcout >>= 1       # first bit is 'null' so drop it
-        return adcout
-
-'''  Example Code
-# 10k trim pot connected to adc #0
-potentiometer_adc = 0;
-
-last_read = 0       # this keeps track of the last potentiometer value
-tolerance = 5       # to keep from being jittery we'll only change
-                    # volume when the pot has moved more than 5 'counts'
-
-while True:
-        # we'll assume that the pot didn't move
-        trim_pot_changed = False
-
-        # read the analog pin
-        trim_pot = readadc(potentiometer_adc, SPICLK, SPIMOSI, SPIMISO, SPICS)
-'''
-
 
 # --------------- Main Method --------------------
 def main():
@@ -197,8 +131,7 @@ def main():
   # Initialise devices
   lcd_init()
   instance = dht11.DHT11(pin = Temp_sensor)
-  #gas_adc = 0   # Gas sensor is connected to ADC channel 0
-  tgs822 = MCP.MCP3208(1)
+  tgs822 = MCP.MCP3208(1) # Using SPI channel 1 (SPICS1)
 
   while True:
 	#get DHT11 sensor value
@@ -223,21 +156,12 @@ def main():
 		
 			
 	# read the analog pin for the gas sensor
-#        gas = readadc(gas_adc, SPICLK, SPIMOSI, SPIMISO, SPICS)
-	gas = tgs822.read(0)
-	if gas>-1:
-		lcd_string("Gas Sensor OK",LCD_LINE_1)
-		lcd_string("Value:"+str(gas),LCD_LINE_2)
-		time.sleep(3) # 3 second delay
-	else:
-		lcd_string("Gas Sensor ERR",LCD_LINE_1)
-		lcd_string("ERR CODE: " + str(gas),LCD_LINE_2)
-		time.sleep(3)
+	gas = tgs822.read(0) # Using ADC Ch 0
+	lcd_string("Gas Sensor OK",LCD_LINE_1)
+	lcd_string("Value:"+str(gas),LCD_LINE_2)
+	time.sleep(3) # 3 second delay
 
 
-
-
- 
 if __name__ == '__main__':
 
   try:
