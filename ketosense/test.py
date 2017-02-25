@@ -14,6 +14,7 @@ Components Used:
 # ---------- Setup and Initialization -----------------
 
 # Import Libraries
+import mcp3204 as MCP
 import smbus
 import time
 import dht11
@@ -33,14 +34,14 @@ GPIO.setup(sw_3,GPIO.IN)
 # DHT11 data pin
 Temp_sensor = 12
 # ADC (Gas Sensor on CH0)
-SPICLK = 18
-SPIMISO = 23
-SPIMOSI = 24
-SPICS = 25
-GPIO.setup(SPIMOSI, GPIO.OUT)
-GPIO.setup(SPIMISO, GPIO.IN)
-GPIO.setup(SPICLK, GPIO.OUT)
-GPIO.setup(SPICS, GPIO.OUT)
+#SPICLK = 18
+#SPIMISO = 23
+#SPIMOSI = 24
+#SPICS = 25
+#GPIO.setup(SPIMOSI, GPIO.OUT)
+#GPIO.setup(SPIMISO, GPIO.IN)
+#GPIO.setup(SPICLK, GPIO.OUT)
+#GPIO.setup(SPICS, GPIO.OUT)
 #//////////////////
 
 
@@ -136,8 +137,9 @@ lcd_line2 = "humid:"+str(dht.humidity)+"%"
 # Written by Limor "Ladyada" Fried for Adafruit Industries, (c) 2015
 # This code is released into the public domain
 
+
 # read SPI data from MCP3008 chip, 8 possible adc's (0 thru 7)
-def readadc(adcnum, clockpin, mosipin, misopin, cspin):
+def readadc_old(adcnum, clockpin, mosipin, misopin, cspin):
         if ((adcnum > 7) or (adcnum < 0)):
                 return -1
         GPIO.output(cspin, True)
@@ -195,7 +197,8 @@ def main():
   # Initialise devices
   lcd_init()
   instance = dht11.DHT11(pin = Temp_sensor)
-  gas_adc = 0   # Gas sensor is connected to ADC channel 0
+  #gas_adc = 0   # Gas sensor is connected to ADC channel 0
+  tgs822 = MCP.MCP3208(1)
 
   while True:
 	#get DHT11 sensor value
@@ -220,7 +223,8 @@ def main():
 		
 			
 	# read the analog pin for the gas sensor
-        gas = readadc(gas_adc, SPICLK, SPIMOSI, SPIMISO, SPICS)
+#        gas = readadc(gas_adc, SPICLK, SPIMOSI, SPIMISO, SPICS)
+	gas = tgs822.read(0)
 	if gas>-1:
 		lcd_string("Gas Sensor OK",LCD_LINE_1)
 		lcd_string("Value:"+str(gas),LCD_LINE_2)
