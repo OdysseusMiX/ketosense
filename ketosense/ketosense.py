@@ -84,6 +84,10 @@ LOW = GPIO.LOW
 HIGH = GPIO.HIGH
 
 currentMode=1 # 1 = PPM, 2 = mmol/l
+GlobalMaxValue=0
+GlobalMinValue=0
+currentTemperature = 28
+currentHumidity = 60
 
 # Initial values for variables
 # Starting state for buttons
@@ -214,6 +218,14 @@ def setup():
 
 def loop():
 	# Loop program block
+	global lastPPM
+	global currentMode
+	global resetMaxSwitchCurrentButton
+	global resetMaxSwitchLastButton
+	global resetSensorSwitchCurrentButton
+	global resetSensorSwitchLastButton
+	global toggleModeCurrentButton
+	global toggleModeLastButton
 	while True:
 		# read the analog pin for the gas sensor
 #		gas = tgs822.read(0) # Using ADC Ch 0
@@ -225,7 +237,7 @@ def loop():
 		# Check if all readings are the same which indictae a stabile behaviour 
 		# and if the value is higher or lower update global max and min variables.
 		updateNewMaxOrMinWithTempHumidity(tempRead1, tempRead1, tempRead1)
-		
+
 		# print result to display if current value is different to previous value and update the highest value.
 		if (acetoneResistanceToPPMf(toResistance(temperatureScaledValue)) != lastPPM):
 			lastPPM = acetoneResistanceToPPMf(toResistance(temperatureScaledValue))
@@ -268,7 +280,7 @@ def loop():
 				printToRow2("as mmol/l.")
 				delay(1000)
 				updateScreen()
-			else if (currentMode == 2):
+			elif (currentMode == 2):
 				currentMode=1
 				clearLcd()
 				printToRow1("Result displayed")
@@ -288,6 +300,7 @@ def ppmToMmol(PPM):
  return ppmInmmol
 
 def readsensor():
+  global tempRead1
   tempRead1 = tgs822.read(0)
   delay(5)
   tempRead2 = tgs822.read(0)
@@ -302,13 +315,18 @@ def updateScreen():
 	printToRow1("H:" + str(currentHumidity) + " T:" + str(currentTemperature) + " R:" + str(GlobalMaxValue))
 	if (currentMode == 2):
 		# Result in mmol/l
+
 		valueNow = ppmToMmol(acetoneResistanceToPPMf(toResistance(temperatureScaledValue)))
 		valueMax = ppmToMmol(acetoneResistanceToPPMf(toResistance(GlobalMaxValue)))
+		strNow = "{0:0.2f}".format(valueNow)
+		strMax = "{0:0.2f}".format(valueMax)
 	elif (currentMode == 1):
 		# result in PPM
 		valueNow = acetoneResistanceToPPMf(toResistance(temperatureScaledValue))
 		valueMax = acetoneResistanceToPPMf(toResistance(GlobalMaxValue))
-	printToRow2("Now: "+str(valueNow)+" Max: " + str(valueMax))
+		strNow = str(valueNow)
+		strMax = str(valueMax)
+	printToRow2(strNow+" Max(" + strMax + ")")
   
 
 # calculate the gas concentration relative to the resistance
@@ -316,8 +334,10 @@ def acetoneResistanceToPPMf(resistance):
   tempResistance = resistance
   if (tempResistance > 50000):
   	PPM = 0
+  elif (tempResistance < 1):
+	PPM = 99999
   else:
-  	logPPM = (math.log10(tempResistance/R0)*-2.6)+2.7
+	logPPM = (math.log10(tempResistance/R0)*-2.6)+2.7
   	PPM = pow(10, logPPM)
 
   return int(PPM)
@@ -340,9 +360,9 @@ def tempHumidityCompensation(value):
     delay(300)
     # currentHumidity = ((double)DHT11.humidity)
     # Hardcoded after realizing that the temperature and humidity were beahaving stabilly.
-    currentHumidity = 60
+    #currentHumidity = 60
     # currentTemperature = ((double)DHT11.temperature)
-    currentTemperature = 28
+    #currentTemperature = 28
     # function derrived from regression analysis of the graph in the datasheet
     scalingFactor = (((currentTemperature * -0.02573)+1.898)+((currentHumidity*-0.011)+0.3966))
     # debug
@@ -357,6 +377,9 @@ def tempHumidityCompensation(value):
       
 # check if we have new max or min after temperature and humidity scaling has been done. 
 def updateNewMaxOrMinWithTempHumidity(value1, value2, value3):
+  global GlobalMaxValue
+  global GlobalMinValue
+  global temperatureScaledValue
   if (value1 == value2 and value1 == value3):
     temperatureScaledValue = tempHumidityCompensation(value1)
     
@@ -375,6 +398,9 @@ def updateNewMaxOrMinWithTempHumidity(value1, value2, value3):
 
 # check if we have new max or min without temperature and humidity scaling. 
 def updateNewMaxOrMin(value1, value2, value3):
+  global GlobalMaxValue
+  global GlobalMinValue
+  global temperatureScaledValue
   if (value1 == value2 and value1 == value3):
     if (GlobalMaxValue==0):
       GlobalMaxValue = value1
@@ -389,19 +415,23 @@ def updateNewMaxOrMin(value1, value2, value3):
       GlobalMaxValue = value1
     
 
-# Convert the 1-1023 voltage value from gas sensor analog read to a resistance, 9800 is the value of the other resistor in the voltage divide.
+# Convert the 0-4095 voltage value from gas sensor analog read to a resistance, 1000 is the value of the other resistor in the voltage divide.
 def toResistance(reading):
   reading = int(reading)
-  resistance = ((5/toVoltage(reading) - 1) * 9800)
+  vOut = toVoltage(reading)
+  if (vOut > 0):
+    resistance = ((5/vOut - 1) * 1000)
+  else:
+    resistance = 100000
   return float(resistance)
 
 
 # Convert the 0-4095 value from analog read to a voltage.
 def toVoltage(reading):
-  reading = int(reading)
-  # constant derived from 5/1023 = 0.001220703
+  readingf = float(reading)
+  # constant derived from 5/4095 = 0.001220703
   voltageConversionConstant = 0.001220703
-  voltageRead = reading * voltageConversionConstant
+  voltageRead = readingf * voltageConversionConstant
   return float(voltageRead)
 
 
