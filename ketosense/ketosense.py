@@ -21,33 +21,31 @@ Code Overview:
 # ---------- Setup and Initialization -----------------
 
 # Import Libraries
+import mcp3204 as MCP
 import smbus
 import time
 import dht11
 import RPi.GPIO as GPIO
+import math
 #//////////////////
 
 # GPIO Pin Setup
 GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BCM)       # Use BCM GPIO numbers
 # Pushbuttons
-sw_1 = 13
-sw_2 = 19
-sw_3 = 26
-GPIO.setup(sw_1,GPIO.IN)
-GPIO.setup(sw_2,GPIO.IN)
-GPIO.setup(sw_3,GPIO.IN)
+resetMaxSwitchPin = 5
+resetSensorSwitchPin = 6
+toggleModeSwitchPin = 13
+GPIO.setup(resetMaxSwitchPin,GPIO.IN)
+GPIO.setup(resetSensorSwitchPin,GPIO.IN)
+GPIO.setup(toggleModeSwitchPin,GPIO.IN)
+
 # DHT11 data pin
-Temp_sensor = 14
-# ADC (Gas Sensor on CH0)
-SPICLK = 18
-SPIMISO = 23
-SPIMOSI = 24
-SPICS = 25
-GPIO.setup(SPIMOSI, GPIO.OUT)
-GPIO.setup(SPIMISO, GPIO.IN)
-GPIO.setup(SPICLK, GPIO.OUT)
-GPIO.setup(SPICS, GPIO.OUT)
+Temp_sensor = 12
+DHT = dht11.DHT11(pin = Temp_sensor)
+
+# Gas Sensor via ADC
+tgs822 = MCP.MCP3208(1) # Using SPI channel 1 (SPICS1)
 #//////////////////
 
 
@@ -77,6 +75,36 @@ E_DELAY = 0.0005
 #Open I2C interface
 #bus = smbus.SMBus(0)  # Rev 1 Pi uses 0
 bus = smbus.SMBus(1) # Rev 2 Pi uses 1
+#//////////////////
+
+
+# Variables for the program
+# Arduino to RPi.GPIO translation variables
+LOW = GPIO.LOW
+HIGH = GPIO.HIGH
+
+currentMode=1 # 1 = PPM, 2 = mmol/l
+
+# Initial values for variables
+# Starting state for buttons
+resetMaxSwitchLastButton = LOW
+resetMaxSwitchCurrentButton = LOW
+resetSensorSwitchLastButton = LOW
+resetSensorSwitchCurrentButton = LOW
+toggleModeLastButton = LOW
+toggleModeCurrentButton = LOW
+
+# Read gas variables
+tempRead1 = 0
+tempRead2 = 0
+tempRead3 = 0
+value1 = 0
+value2 = 0
+value3 = 0
+
+# General Var
+R0 = 4500
+lastPPM = 0
 #//////////////////
 
 
@@ -130,103 +158,308 @@ def lcd_string(message,line):
 # --------------- DHT11 Method Examples -----------------
 '''
 # Initialise Temp Sensor
-instance = dht11.DHT11(pin = Temp_sensor)
+DHT = dht11.DHT11(pin = Temp_sensor)
 
 #get DHT11 sensor value
-result = instance.read()
+result = DHT.read()
 lcd_line1 = "temp:"+str(dht.temperature)+" C"
 lcd_line2 = "humid:"+str(dht.humidity)+"%"
 '''
 
-# -------------- ADC Methods -----------------------
-# Extracted from http://osoyoo.com/driver/raspi-adc-pot.py
-# Written by Limor "Ladyada" Fried for Adafruit Industries, (c) 2015
-# This code is released into the public domain
+# -------------- Missing Built-in functions ----------------------
+def delay(ms):
+  time.sleep(ms/1000)
 
-# read SPI data from MCP3008 chip, 8 possible adc's (0 thru 7)
-def readadc(adcnum, clockpin, mosipin, misopin, cspin):
-        if ((adcnum > 7) or (adcnum < 0)):
-                return -1
-        GPIO.output(cspin, True)
+def digitalRead(channel):
+  return GPIO.input(channel)
 
-        GPIO.output(clockpin, False)  # start clock low
-        GPIO.output(cspin, False)     # bring CS low
+# -------------  Ketosense Code ---------------------
+def setup():
+	# Setup program block
 
-        commandout = adcnum
-        commandout |= 0x18  # start bit + single-ended bit
-        commandout <<= 3    # we only need to send 5 bits here
-        for i in range(5):
-                if (commandout & 0x80):
-                        GPIO.output(mosipin, True)
-                else:
-                        GPIO.output(mosipin, False)
-                commandout <<= 1
-                GPIO.output(clockpin, True)
-                GPIO.output(clockpin, False)
+	# Initiate LCD
+	lcd_init()
 
-        adcout = 0
-        # read in one empty bit, one null bit and 10 ADC bits
-        for i in range(12):
-                GPIO.output(clockpin, True)
-                GPIO.output(clockpin, False)
-                adcout <<= 1
-                if (GPIO.input(misopin)):
-                        adcout |= 0x1
+	# Write Welcome message
+	printToRow1("Hi I'm Ketosense")
+	printToRow2("Time to warm up.")
+	delay(2000)
 
-        GPIO.output(cspin, True)
-        
-        adcout >>= 1       # first bit is 'null' so drop it
-        return adcout
-
-'''  Example Code
-# 10k trim pot connected to adc #0
-potentiometer_adc = 0;
-
-last_read = 0       # this keeps track of the last potentiometer value
-tolerance = 5       # to keep from being jittery we'll only change
-                    # volume when the pot has moved more than 5 'counts'
-
-while True:
-        # we'll assume that the pot didn't move
-        trim_pot_changed = False
-
-        # read the analog pin
-        trim_pot = readadc(potentiometer_adc, SPICLK, SPIMOSI, SPIMISO, SPICS)
-'''
+	# Initiate DHT11 temperature and humidity sensor and verify it.
+	clearLcd()
+	printToRow1("Check DHT sensor: ")
+	dht = DHT.read()
+	chk = dht.error_code  
+	if chk == 0: 
+	    printToRow2("Ok. ")
+	elif chk == 2: 
+	    printToRow2("Checksum error")
+	elif chk == 1: 
+	    printToRow2("Time out error")
+	else:
+	    printToRow2("Unknown error")
+	delay(2000)
 
 
-# --------------- Main Method --------------------
-def main():
-  # Main program block
+	# Warmup, check that sensor is stabile.
+	while (checkIfSensorIsStabile() == False):
+		checkIfSensorIsStabile()
 
-  # Initialise devices
-  lcd_init()
-  instance = dht11.DHT11(pin = Temp_sensor)
-  gas_adc = 0   # Gas sensor is connected to ADC channel 0
+	clearLcd()
+	printToRow1("Warmup finished")
+	delay(1000)
+	clearLcd()
+	printToRow1("Blow into mouth-")
+	printToRow2("piece to start.")
 
-  while True:
-	#get DHT11 sensor value
-	dht = instance.read()
+def loop():
+	# Loop program block
+	while True:
+		# read the analog pin for the gas sensor
+#		gas = tgs822.read(0) # Using ADC Ch 0
+#		lcd_string("Gas Sensor",LCD_LINE_1)
+#		lcd_string("Value:"+str(gas),LCD_LINE_2)
+		
+		# read three times from gas sensor with 5ms between each reading
+  		readsensor()
+		# Check if all readings are the same which indictae a stabile behaviour 
+		# and if the value is higher or lower update global max and min variables.
+		updateNewMaxOrMinWithTempHumidity(tempRead1, tempRead1, tempRead1)
+		
+		# print result to display if current value is different to previous value and update the highest value.
+		if (acetoneResistanceToPPMf(toResistance(temperatureScaledValue)) != lastPPM):
+			lastPPM = acetoneResistanceToPPMf(toResistance(temperatureScaledValue))
+			updateScreen()
+		
 
-	# read the analog pin for the gas sensor
-        gas = readadc(gas_adc, SPICLK, SPIMOSI, SPIMISO, SPICS)
+		# read buttons
 
-    # Send some test
-
-	if result.is_valid():
-		lcd_string("temp:"+str(dht.temperature)+" C",LCD_LINE_1)
-		lcd_string("humid:"+str(dht.humidity)+"%",LCD_LINE_2)
-		time.sleep(3) # 3 second delay
-		lcd_string("Read Tutorial: ",LCD_LINE_1)
-		lcd_string("osoyoo.com",LCD_LINE_2)
-		time.sleep(3)
+		# read resetMaxMinSwitch
+		resetMaxSwitchCurrentButton = debounce(resetMaxSwitchLastButton, resetMaxSwitchPin)
+		if (resetMaxSwitchLastButton == LOW and resetMaxSwitchCurrentButton == HIGH):
+			clearLcd()
+			printToRow1("Result displayed")
+			printToRow2("as mmol/l.")
+		resetMaxSwitchLastButton = resetMaxSwitchCurrentButton
 
 
- 
+		# read resetSensorSwitch
+		resetSensorSwitchCurrentButton = debounce(resetSensorSwitchLastButton, resetSensorSwitchPin)
+		if (resetSensorSwitchLastButton == LOW and resetSensorSwitchCurrentButton == HIGH):
+			while (checkIfSensorIsStabile() == False):
+				checkIfSensorIsStabile()
+			clearLcd()
+			printToRow1("Reset finished")
+			delay(1000)
+			clearLcd()
+			GlobalMaxValue=0
+			GlobalMinValue=0
+			printToRow1("Blow into mouth-")
+			printToRow2("piece to start.") 
+		resetSensorSwitchLastButton = resetSensorSwitchCurrentButton
+
+
+		toggleModeCurrentButton = debounce(toggleModeLastButton, toggleModeSwitchPin)
+		if (toggleModeLastButton == LOW and toggleModeCurrentButton == HIGH):
+			if (currentMode == 1):
+				currentMode=2
+				clearLcd()
+				printToRow1("Result displayed")
+				printToRow2("as mmol/l.")
+				delay(1000)
+				updateScreen()
+			else if (currentMode == 2):
+				currentMode=1
+				clearLcd()
+				printToRow1("Result displayed")
+				printToRow2("as PPM.")
+				delay(1000)
+				updateScreen()
+		toggleModeLastButton = toggleModeCurrentButton
+
+
+#//////////////////////////
+#/// Methods start here ///
+#//////////////////////////
+# Reads sensor 3 times with 5ms delay between reads and store read values in tempRead1, 2 and 3
+def ppmToMmol(PPM):
+ ppmInmmol = ((PPM / 1000) / 58.08)
+ ppmInmmol = ppmInmmol * 1000
+ return ppmInmmol
+
+def readsensor():
+  tempRead1 = tgs822.read(0)
+  delay(5)
+  tempRead2 = tgs822.read(0)
+  delay(5)
+  tempRead3 = tgs822.read(0)
+  delay(5)
+
+
+# Update screen with result
+def updateScreen():
+	clearLcd()
+	printToRow1("H:" + str(currentHumidity) + " T:" + str(currentTemperature) + " R:" + str(GlobalMaxValue))
+	if (currentMode == 2):
+		# Result in mmol/l
+		valueNow = ppmToMmol(acetoneResistanceToPPMf(toResistance(temperatureScaledValue)))
+		valueMax = ppmToMmol(acetoneResistanceToPPMf(toResistance(GlobalMaxValue)))
+	elif (currentMode == 1):
+		# result in PPM
+		valueNow = acetoneResistanceToPPMf(toResistance(temperatureScaledValue))
+		valueMax = acetoneResistanceToPPMf(toResistance(GlobalMaxValue))
+	printToRow2("Now: "+str(valueNow)+" Max: " + str(valueMax))
+  
+
+# calculate the gas concentration relative to the resistance
+def acetoneResistanceToPPMf(resistance):
+  tempResistance = resistance
+  if (tempResistance > 50000):
+  	PPM = 0
+  else:
+  	logPPM = (math.log10(tempResistance/R0)*-2.6)+2.7
+  	PPM = pow(10, logPPM)
+
+  return int(PPM)
+
+
+
+# debounce function
+def debounce(last, pin):
+  current = digitalRead(pin)
+  if (last != current):
+    delay(5)
+    current = digitalRead(pin)
+
+  return current
+
+
+# temperature sensor function, values has been hardcoded to humidity = 60 and temperature = 28 to speed up the measuring.
+def tempHumidityCompensation(value):
+    #chk = DHT.read()
+    delay(300)
+    # currentHumidity = ((double)DHT11.humidity)
+    # Hardcoded after realizing that the temperature and humidity were beahaving stabilly.
+    currentHumidity = 60
+    # currentTemperature = ((double)DHT11.temperature)
+    currentTemperature = 28
+    # function derrived from regression analysis of the graph in the datasheet
+    scalingFactor = (((currentTemperature * -0.02573)+1.898)+((currentHumidity*-0.011)+0.3966))
+    # debug
+    # clearLcd()
+    # printToRow1("Scalefactor:")
+    # printFloatToCurrentCursorPossition((float)scalingFactor)
+    delay(1000)
+    # debugstop*/
+    scaledValue = value * scalingFactor
+    return int(scaledValue)
+    
+      
+# check if we have new max or min after temperature and humidity scaling has been done. 
+def updateNewMaxOrMinWithTempHumidity(value1, value2, value3):
+  if (value1 == value2 and value1 == value3):
+    temperatureScaledValue = tempHumidityCompensation(value1)
+    
+    if (GlobalMaxValue==0):
+      GlobalMaxValue = temperatureScaledValue
+    
+    if (GlobalMinValue==0):
+      GlobalMinValue = temperatureScaledValue
+    
+    if (temperatureScaledValue < GlobalMinValue):
+      GlobalMinValue = temperatureScaledValue
+    
+    if (temperatureScaledValue > GlobalMaxValue):
+      GlobalMaxValue = temperatureScaledValue
+    
+
+# check if we have new max or min without temperature and humidity scaling. 
+def updateNewMaxOrMin(value1, value2, value3):
+  if (value1 == value2 and value1 == value3):
+    if (GlobalMaxValue==0):
+      GlobalMaxValue = value1
+    
+    if (GlobalMinValue==0):
+      GlobalMinValue = value1
+    
+    if (value1 < GlobalMinValue):
+      GlobalMinValue = value1
+    
+    if (value1 > GlobalMaxValue):
+      GlobalMaxValue = value1
+    
+
+# Convert the 1-1023 voltage value from gas sensor analog read to a resistance, 9800 is the value of the other resistor in the voltage divide.
+def toResistance(reading):
+  reading = int(reading)
+  resistance = ((5/toVoltage(reading) - 1) * 9800)
+  return float(resistance)
+
+
+# Convert the 0-4095 value from analog read to a voltage.
+def toVoltage(reading):
+  reading = int(reading)
+  # constant derived from 5/1023 = 0.001220703
+  voltageConversionConstant = 0.001220703
+  voltageRead = reading * voltageConversionConstant
+  return float(voltageRead)
+
+
+def printToRow1(string):
+  lcd_string(string,LCD_LINE_1)
+
+def printToRow2(string):
+  lcd_string(string,LCD_LINE_2)
+  
+def clearLcd():
+  lcd_byte(0x01, LCD_CMD) # Clear screen
+
+def checkIfSensorIsStabile():
+  # read samples for 10 seconds
+  for i in range(20):
+    # read Acetone Sensor
+    newCalibrationVal = tgs822.read(0) # Using ADC Ch 0
+
+    # set first sample as baseline
+    if (i==0):
+      calibrationLow = newCalibrationVal
+      calibrationHigh = newCalibrationVal
+
+    # Determine if last sensor reading is higher then previous high
+    if (newCalibrationVal > calibrationHigh):
+      calibrationHigh = newCalibrationVal
+    
+    # Determine if sensor reading is lower then previous high
+    if (newCalibrationVal < calibrationLow):
+      calibrationLow = newCalibrationVal
+    
+    # Print current max and min to lcd
+    clearLcd()
+    printToRow1("i:" + str(i))
+
+    printToRow2("Max:" +str(calibrationHigh) + " Min:" + str(calibrationLow))
+    delay(1000)
+
+    if ((calibrationHigh - calibrationLow) > 5):
+      return False
+
+  #  Check if resistance has not changed more then 5 steps during 10 sec = unstabile sensor
+  if ((calibrationHigh - calibrationLow) <= 3 or calibrationHigh <= 135):
+    return True 
+  else:
+    return False
+
+
+
+# --------------  Python code to execute if file is used directly ------------------
+#  This code only runs when using a command such as '$ sudo python ketosense.py'
+
+
 if __name__ == '__main__':
 
   try:
-    main()
+    setup()
+    loop()
   except KeyboardInterrupt:
     pass
   finally:
@@ -234,5 +467,6 @@ if __name__ == '__main__':
 
 # End
 GPIO.cleanup()
+
 
 

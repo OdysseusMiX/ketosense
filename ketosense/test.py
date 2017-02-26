@@ -140,7 +140,7 @@ def main():
 	if dht.is_valid():
 		lcd_string("temp:"+str(dht.temperature)+" C",LCD_LINE_1)
 		lcd_string("humid:"+str(dht.humidity)+"%",LCD_LINE_2)
-		time.sleep(3) # 3 second delay
+		time.sleep(1) # 3 second delay
 	else:
 		err_code = dht.error_code		
 		if err_code == 1:
@@ -152,14 +152,14 @@ def main():
 		
 		lcd_string("Temp Sensor Err",LCD_LINE_1)
 		lcd_string(err_str,LCD_LINE_2)
-		time.sleep(3)
+		time.sleep(1)
 		
 			
 	# read the analog pin for the gas sensor
 	gas = tgs822.read(0) # Using ADC Ch 0
 	lcd_string("Gas Sensor OK",LCD_LINE_1)
 	lcd_string("Value:"+str(gas),LCD_LINE_2)
-	time.sleep(3) # 3 second delay
+	time.sleep(1) # 3 second delay
 
 
 if __name__ == '__main__':
